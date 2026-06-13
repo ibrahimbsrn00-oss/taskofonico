@@ -191,8 +191,13 @@ export const sessionStore = {
   consumeBasecampTokenFromUrl() {
     if (!isBrowserRuntime()) return null;
 
-    const params = new URLSearchParams(window.location.search);
-    const token = params.get('basecamp_token');
+    const searchParams = new URLSearchParams(window.location.search);
+    const hashValue = window.location.hash.startsWith('#')
+      ? window.location.hash.slice(1)
+      : window.location.hash;
+    const normalizedHash = hashValue.startsWith('?') ? hashValue.slice(1) : hashValue;
+    const hashParams = new URLSearchParams(normalizedHash);
+    const token = searchParams.get('basecamp_token') || hashParams.get('basecamp_token');
     if (!token) return null;
 
     this.setBasecampToken(token);

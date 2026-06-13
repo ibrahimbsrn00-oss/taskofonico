@@ -211,6 +211,21 @@ const resolveDesktopReturnUrl = (value: unknown) => {
   }
 };
 
+const buildOAuthReturnUrl = (desktopReturnUrl: URL | null, accessToken: string) => {
+  if (!desktopReturnUrl) {
+    return `/?basecamp_token=${encodeURIComponent(accessToken)}`;
+  }
+
+  const normalizedBase = desktopReturnUrl.toString().replace(/\/$/, "");
+  const encodedToken = encodeURIComponent(accessToken);
+
+  if (desktopReturnUrl.protocol === "tauri:") {
+    return `${normalizedBase}/#basecamp_token=${encodedToken}`;
+  }
+
+  return `${normalizedBase}/?basecamp_token=${encodedToken}`;
+};
+
 app.get('/auth/basecamp', (req, res) => {
   if (!BASECAMP_CLIENT_ID) {
     return res.status(500).send("BASECAMP_CLIENT_ID is not configured in environment variables.");
@@ -244,6 +259,9 @@ app.get('/auth/basecamp/callback', async (req, res) => {
     
     const data = await tokenResponse.json();
     const accessToken = data.access_token;
+    const returnUrl = buildOAuthReturnUrl(desktopReturnUrl, accessToken);
+    const serializedAccessToken = JSON.stringify(accessToken);
+    const serializedReturnUrl = JSON.stringify(returnUrl);
     
     // Return HTML to post message to main window and close popup
     const html = `
@@ -264,11 +282,11 @@ app.get('/auth/basecamp/callback', async (req, res) => {
         </div>
         <script>
           if (window.opener) {
-            window.opener.postMessage({ type: 'BASECAMP_AUTH_SUCCESS', token: '${accessToken}' }, '*');
+            window.opener.postMessage({ type: 'BASECAMP_AUTH_SUCCESS', token: ${serializedAccessToken} }, '*');
             setTimeout(function() { window.close(); }, 100);
           } else {
             // Fallback if not opened in a popup
-            window.location.href = '${desktopReturnUrl ? `${desktopReturnUrl.toString().replace(/\/$/, "")}/?basecamp_token=${accessToken}` : `/?basecamp_token=${accessToken}` }';
+            window.location.replace(${serializedReturnUrl});
           }
         </script>
       </body>
