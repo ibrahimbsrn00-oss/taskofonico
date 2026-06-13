@@ -1,0 +1,25 @@
+{
+  "entities": {
+    "Task": {
+      "title": "Task",
+      "description": "A parsed task from Basecamp.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "taskName": { "type": "string" },
+        "projectName": { "type": "string" },
+        "mentionText": { "type": "string" },
+        "deadline": { "type": ["string", "null"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "taskName", "projectName", "mentionText"]
+    }
+  },
+  "firestore": {
+    "tasks/{taskId}": {
+      "schema": "Task",
+      "description": "Tasks belonging to a user."
+    }
+  }
+}

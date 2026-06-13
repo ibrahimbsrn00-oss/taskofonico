@@ -1,0 +1,88 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net
+    match /{document=**} { allow read, write: if false; }
+
+    function isValidId(id) { 
+      return id is string && id.size() <= 256 && id.matches('^[a-zA-Z0-9_\\-\\.%]+$'); 
+    }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isSignedIn() { return request.auth != null; }
+
+    function isValidTask(data) {
+      let hasKeys = data.keys().hasAll(['userId', 'taskName', 'projectName']) && data.keys().size() >= 3 && data.keys().size() <= 12;
+      let validUserId = data.userId == request.auth.uid;
+      let validTaskName = data.taskName is string && data.taskName.size() <= 500;
+      let validProjectName = data.projectName is string && data.projectName.size() <= 200;
+      let validMentionText = !('mentionText' in data) || data.mentionText == null || (data.mentionText is string && data.mentionText.size() <= 10000);
+      let validDeadline = !('deadline' in data) || data.deadline == null || (data.deadline is string && data.deadline.size() <= 50);
+      let validIsCompleted = !('isCompleted' in data) || data.isCompleted is bool;
+      let validCategory = !('category' in data) || (data.category is string && data.category.size() <= 50);
+      let validTaskUrl = !('taskUrl' in data) || data.taskUrl == null || (data.taskUrl is string && data.taskUrl.size() <= 1000);
+      return hasKeys && validUserId && validTaskName && validProjectName && validMentionText && validDeadline && validIsCompleted && validCategory && validTaskUrl;
+    }
+
+    function isValidPlatedTask(data) {
+      let hasKeys = data.keys().hasAll(['userId', 'sourceTaskKey', 'taskName', 'projectName', 'plateOrder', 'platedAt']) && data.keys().size() >= 6 && data.keys().size() <= 13;
+      let validCore = data.userId == request.auth.uid
+        && data.sourceTaskKey is string && data.sourceTaskKey.size() <= 1200
+        && data.taskName is string && data.taskName.size() <= 500
+        && data.projectName is string && data.projectName.size() <= 200
+        && data.plateOrder is int && data.plateOrder >= 0 && data.plateOrder <= 5000
+        && data.platedAt is string && data.platedAt.size() <= 100;
+      let validOptional = (!('mentionText' in data) || data.mentionText == null || (data.mentionText is string && data.mentionText.size() <= 10000))
+        && (!('deadline' in data) || data.deadline == null || (data.deadline is string && data.deadline.size() <= 50))
+        && (!('completedAt' in data) || data.completedAt == null || (data.completedAt is string && data.completedAt.size() <= 100))
+        && (!('isCompleted' in data) || data.isCompleted is bool)
+        && (!('category' in data) || (data.category is string && data.category.size() <= 50))
+        && (!('taskUrl' in data) || data.taskUrl == null || (data.taskUrl is string && data.taskUrl.size() <= 1000));
+      return hasKeys && validCore && validOptional;
+    }
+
+    match /tasks/{taskId} {
+      allow read: if isSignedIn() && existing().userId == request.auth.uid;
+      
+      allow create: if isSignedIn() 
+        && isValidId(taskId)
+        && isValidTask(incoming())
+        && (!('createdAt' in incoming()) || incoming().createdAt == request.time)
+        && (!('updatedAt' in incoming()) || incoming().updatedAt == request.time);
+        
+      allow update: if isSignedIn() 
+        && isValidId(taskId)
+        && existing().userId == request.auth.uid
+        && incoming().userId == existing().userId
+        && isValidTask(incoming())
+        && (!('createdAt' in incoming()) || incoming().createdAt == existing().createdAt)
+        && (!('updatedAt' in incoming()) || incoming().updatedAt == request.time)
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+            'taskName', 'projectName', 'mentionText', 'deadline', 'updatedAt', 'isCompleted', 'category', 'taskUrl'
+        ]);
+
+      allow delete: if isSignedIn() && isValidId(taskId) && existing().userId == request.auth.uid;
+    }
+
+    match /platedTasks/{plateTaskId} {
+      allow read: if isSignedIn() && existing().userId == request.auth.uid;
+
+      allow create: if isSignedIn()
+        && isValidId(plateTaskId)
+        && isValidPlatedTask(incoming())
+        && (!('updatedAt' in incoming()) || incoming().updatedAt == request.time);
+
+      allow update: if isSignedIn()
+        && isValidId(plateTaskId)
+        && existing().userId == request.auth.uid
+        && incoming().userId == existing().userId
+        && isValidPlatedTask(incoming())
+        && (!('updatedAt' in incoming()) || incoming().updatedAt == request.time)
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'sourceTaskKey', 'taskName', 'projectName', 'mentionText', 'deadline', 'completedAt', 'updatedAt', 'isCompleted', 'category', 'taskUrl', 'plateOrder', 'platedAt'
+        ]);
+
+      allow delete: if isSignedIn() && isValidId(plateTaskId) && existing().userId == request.auth.uid;
+    }
+  }
+}

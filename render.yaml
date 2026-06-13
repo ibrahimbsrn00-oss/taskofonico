@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: taskofonico
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: NODE_ENV
+        value: production
+      - key: APP_URL
+        value: https://taskofonico.onrender.com
+      - key: APP_BUILD_VERSION
+        value: render-manual
+      - key: BASECAMP_CLIENT_ID
+        sync: false
+      - key: BASECAMP_CLIENT_SECRET
+        sync: false
