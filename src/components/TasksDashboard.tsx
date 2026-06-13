@@ -506,6 +506,9 @@ export default function TasksDashboard() {
     const tokenFromUrl = sessionStore.consumeBasecampTokenFromUrl();
     
     if (tokenFromUrl) {
+      setNeedsAuth(false);
+      setStatusText(appRuntime.isTauriDesktop() ? 'MASAUSTU OTURUMU HAZIR.' : 'BAĞLANTI BAŞARILI!');
+      setIsLoggingIn(false);
       // Auto sign in anonymously to firebase if not already
       anonymousSignIn().catch(console.error);
     }
@@ -542,6 +545,13 @@ export default function TasksDashboard() {
       },
       () => {
         setUser(null);
+        const hasToken = Boolean(sessionStore.getBasecampToken());
+        if (hasToken) {
+          setNeedsAuth(false);
+          setStatusText('BASECAMP BAGLANTISI HAZIR. YEREL OTURUM SENKRONIZE EDILIYOR...');
+          return;
+        }
+
         setNeedsAuth(true);
         setStatusText('SİNYAL YOK. LÜTFEN GİRİŞ YAPIN.');
       }
