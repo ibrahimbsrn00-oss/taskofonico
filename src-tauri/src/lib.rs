@@ -125,6 +125,34 @@ fn show_main_window(app: AppHandle) -> Result<(), String> {
     show_main_window_from_handle(&app)
 }
 
+#[tauri::command]
+fn open_external_url(url: String) -> Result<bool, String> {
+    let trimmed = url.trim();
+    if !(trimmed.starts_with("http://") || trimmed.starts_with("https://")) {
+        return Err("Only http/https URLs are allowed.".to_string());
+    }
+
+    #[cfg(target_os = "macos")]
+    let status = std::process::Command::new("open")
+        .arg(trimmed)
+        .status()
+        .map_err(|error| error.to_string())?;
+
+    #[cfg(target_os = "linux")]
+    let status = std::process::Command::new("xdg-open")
+        .arg(trimmed)
+        .status()
+        .map_err(|error| error.to_string())?;
+
+    #[cfg(target_os = "windows")]
+    let status = std::process::Command::new("rundll32")
+        .args(["url.dll,FileProtocolHandler", trimmed])
+        .status()
+        .map_err(|error| error.to_string())?;
+
+    Ok(status.success())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -135,7 +163,8 @@ pub fn run() {
             clear_basecamp_token,
             get_launch_at_login_enabled,
             set_launch_at_login_enabled,
-            show_main_window
+            show_main_window,
+            open_external_url
         ])
         .setup(|app| {
             #[cfg(desktop)]

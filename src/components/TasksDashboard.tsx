@@ -137,6 +137,7 @@ export default function TasksDashboard() {
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
   const [tabDropTargetId, setTabDropTargetId] = useState<string | null>(null);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
   const [launchAtLoginEnabled, setLaunchAtLoginEnabled] = useState(false);
   const [isAutostartPending, setIsAutostartPending] = useState(false);
   const [isWindowFocused, setIsWindowFocused] = useState(() =>
@@ -144,10 +145,13 @@ export default function TasksDashboard() {
   );
   const isFetchingRef = useRef(false);
   const notificationsMenuRef = useRef<HTMLDivElement | null>(null);
+  const themeMenuRef = useRef<HTMLDivElement | null>(null);
   const pollingTimeoutRef = useRef<number | null>(null);
   const lastFullSyncAtRef = useRef(0);
   const pollingErrorCountRef = useRef(0);
   const hasPrimedActivityNotificationsRef = useRef(false);
+  const hasHydratedTabOrderRef = useRef(false);
+  const hasHydratedPlateTasksRef = useRef(false);
   const seenActivityKeysRef = useRef<Set<string>>(
     new Set(preferencesStore.getSeenActivityKeys<string[]>([]))
   );
@@ -165,6 +169,19 @@ export default function TasksDashboard() {
       task.taskName || '',
       task.projectName || '',
       task.mentionAt || '',
+    ].join('::');
+
+  const getNotificationItemKey = (
+    task: Pick<ExtractedTask, 'taskUrl' | 'taskName' | 'projectName' | 'mentionAt' | 'mentionText' | 'category' | 'readableSgid'>
+  ) =>
+    [
+      task.readableSgid || '',
+      task.category || 'notification',
+      task.taskUrl || '',
+      task.taskName || '',
+      task.projectName || '',
+      task.mentionAt || '',
+      task.mentionText || '',
     ].join('::');
 
   const persistSeenActivityKeys = () => {
@@ -192,9 +209,7 @@ export default function TasksDashboard() {
 
     notification.onclick = () => {
       window.focus();
-      if (task.taskUrl) {
-        window.open(task.taskUrl, '_blank', 'noopener,noreferrer');
-      }
+      void openTaskUrl(task.taskUrl, 'Bu bildirimin Basecamp baglantisi bulunamadi.');
       notification.close();
     };
   };
@@ -346,12 +361,12 @@ export default function TasksDashboard() {
   }, 0);
 
   const markNotificationAsReadLocally = (task: ExtractedTask) => {
-    const taskKey = getTaskKey(task);
+    const notificationKey = getNotificationItemKey(task);
     const nowIso = new Date().toISOString();
 
     setNotificationTasks((currentTasks) =>
       currentTasks.map((currentTask) => {
-        if (getTaskKey(currentTask) !== taskKey) return currentTask;
+        if (getNotificationItemKey(currentTask) !== notificationKey) return currentTask;
         return {
           ...currentTask,
           unreadCount: 0,
@@ -360,6 +375,41 @@ export default function TasksDashboard() {
         };
       })
     );
+  };
+
+  const openTaskUrl = async (taskUrl: string | null | undefined, missingMessage: string) => {
+    if (!taskUrl) {
+      setStatusText(missingMessage);
+      return false;
+    }
+
+    if (appRuntime.isTauriDesktop()) {
+      try {
+        const result = await invoke<boolean>('open_external_url', { url: taskUrl });
+        if (result) {
+          return true;
+        }
+      } catch (error) {
+        console.error('External URL open error:', error);
+      }
+
+      setStatusText('HATA: BAGLANTI DIS TARAYICIDA ACILAMADI.');
+      return false;
+    }
+
+    const popup = window.open(taskUrl, '_blank', 'noopener,noreferrer');
+    if (!popup) {
+      setStatusText('HATA: BAGLANTI ACILAMADI. POP-UP ENGELI OLABILIR.');
+      return false;
+    }
+
+    return true;
+  };
+
+  const handleNotificationClick = async (task: ExtractedTask) => {
+    markNotificationAsReadLocally(task);
+    setIsNotificationsOpen(false);
+    await openTaskUrl(task.taskUrl, 'Bu bildirimin Basecamp baglantisi bulunamadi.');
   };
 
   const hasTaskChanged = (currentTask: ExtractedTask | undefined, nextTask: ExtractedTask) => {
@@ -421,6 +471,9 @@ export default function TasksDashboard() {
       if (!notificationsMenuRef.current?.contains(event.target as Node)) {
         setIsNotificationsOpen(false);
       }
+      if (!themeMenuRef.current?.contains(event.target as Node)) {
+        setIsThemeMenuOpen(false);
+      }
     };
 
     document.addEventListener('mousedown', handlePointerDown);
@@ -475,10 +528,13 @@ export default function TasksDashboard() {
       }
     } catch (error) {
       console.error('Tab order read error:', error);
+    } finally {
+      hasHydratedTabOrderRef.current = true;
     }
   }, []);
 
   useEffect(() => {
+    if (!hasHydratedTabOrderRef.current) return;
     preferencesStore.setTabOrder(tabOrder);
   }, [tabOrder]);
 
@@ -490,10 +546,13 @@ export default function TasksDashboard() {
       }
     } catch (error) {
       console.error('Plate storage read error:', error);
+    } finally {
+      hasHydratedPlateTasksRef.current = true;
     }
   }, []);
 
   useEffect(() => {
+    if (!hasHydratedPlateTasksRef.current) return;
     try {
       preferencesStore.setPlatedTasks(platedTasks);
     } catch (error) {
@@ -938,11 +997,11 @@ export default function TasksDashboard() {
     sessionStore.clearBasecampToken();
     setTasks([]);
     setCompletedTasks([]);
-    setPlatedTasks([]);
     setMentionTasks([]);
     setNotificationTasks([]);
     setNotificationDebug(EMPTY_NOTIFICATION_DEBUG);
     setIsNotificationsOpen(false);
+    setIsThemeMenuOpen(false);
     setHasInitialLoad(false);
     lastFullSyncAtRef.current = 0;
     pollingErrorCountRef.current = 0;
@@ -1179,13 +1238,11 @@ export default function TasksDashboard() {
                  {notificationTasks.length > 0 ? (
                    <div className="max-h-[28rem] overflow-y-auto">
                      {notificationTasks.map((notificationTask) => (
-                       <a
-                         key={`${notificationTask.taskUrl || notificationTask.taskName}-${notificationTask.mentionAt || ''}`}
-                         href={notificationTask.taskUrl || '#'}
-                         target={notificationTask.taskUrl ? '_blank' : undefined}
-                         rel={notificationTask.taskUrl ? 'noopener noreferrer' : undefined}
-                         onClick={() => markNotificationAsReadLocally(notificationTask)}
-                         className="block border-b border-[var(--border-main)] px-4 py-3 transition-colors hover:bg-[var(--bg-main)] last:border-b-0"
+                       <button
+                         key={getNotificationItemKey(notificationTask)}
+                         type="button"
+                         onClick={() => void handleNotificationClick(notificationTask)}
+                         className="block w-full border-b border-[var(--border-main)] px-4 py-3 text-left transition-colors hover:bg-[var(--bg-main)] last:border-b-0"
                        >
                          <div className="flex items-start justify-between gap-3">
                            <div className="min-w-0">
@@ -1219,7 +1276,7 @@ export default function TasksDashboard() {
                              {notificationTask.mentionText}
                            </div>
                          )}
-                       </a>
+                       </button>
                      ))}
                    </div>
                  ) : (
@@ -1234,18 +1291,26 @@ export default function TasksDashboard() {
              )}
            </div>
            
-           <div className="relative group">
-              <button className="app-icon-button" title="Tema Değiştir">
+           <div ref={themeMenuRef} className="relative">
+              <button
+                onClick={() => setIsThemeMenuOpen((prev) => !prev)}
+                className={`app-icon-button ${isThemeMenuOpen ? 'app-icon-button-active' : ''}`}
+                title="Tema Değiştir"
+              >
                 <Palette size={22} />
               </button>
-              <div className="absolute right-0 top-full z-[70] mt-2 w-56 card-bg border border-main rounded-2xl shadow-lg opacity-0 group-hover:opacity-100 transition-opacity overflow-hidden flex flex-col p-2">
+              {isThemeMenuOpen && (
+                <div className="absolute right-0 top-full z-[70] mt-2 w-56 card-bg border border-main rounded-2xl shadow-lg overflow-hidden flex flex-col p-2">
                 {THEME_OPTIONS.map((option) => {
                   const Icon = option.icon;
                   const isActive = theme === option.id;
                   return (
                     <button
                       key={option.id}
-                      onClick={() => setTheme(option.id)}
+                      onClick={() => {
+                        setTheme(option.id);
+                        setIsThemeMenuOpen(false);
+                      }}
                       className={`flex items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition-all ${isActive ? 'bg-[var(--accent)] text-white shadow-sm' : 'text-themed hover:bg-[var(--bg-main)]'}`}
                     >
                       <Icon size={16} />
@@ -1255,7 +1320,10 @@ export default function TasksDashboard() {
                 })}
                 {appRuntime.isTauriDesktop() && (
                   <button
-                    onClick={() => void handleToggleLaunchAtLogin()}
+                    onClick={() => {
+                      setIsThemeMenuOpen(false);
+                      void handleToggleLaunchAtLogin();
+                    }}
                     disabled={isAutostartPending}
                     className="mt-2 flex items-center justify-between rounded-xl border border-[var(--border-main)] px-3 py-2 text-left text-sm text-themed transition-all hover:bg-[var(--bg-main)] disabled:opacity-60"
                   >
@@ -1274,7 +1342,8 @@ export default function TasksDashboard() {
                     </span>
                   </button>
                 )}
-              </div>
+                </div>
+              )}
            </div>
 
            <button 
@@ -1428,15 +1497,14 @@ export default function TasksDashboard() {
                         </button>
 
                         {task.taskUrl ? (
-                          <a
-                            href={task.taskUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
+                          <button
+                            type="button"
+                            onClick={() => void openTaskUrl(task.taskUrl, 'Bu gorevin Basecamp baglantisi bulunamadi.')}
                             className="inline-flex items-center justify-center gap-2 rounded-full border border-[var(--accent)] px-3 py-1.5 text-xs font-semibold text-[var(--accent)] transition-colors hover:bg-[var(--accent)] hover:text-white"
                           >
                             <ExternalLink size={14} />
                             Göreve Git
-                          </a>
+                          </button>
                         ) : null}
                       </div>
                     </div>
@@ -1566,15 +1634,14 @@ export default function TasksDashboard() {
                     </div>
                   </div>
                   {task.taskUrl ? (
-                    <a 
-                      href={task.taskUrl} 
-                      target="_blank" 
-                      rel="noopener noreferrer"
+                    <button
+                      type="button"
+                      onClick={() => void openTaskUrl(task.taskUrl, 'Bu gorevin Basecamp baglantisi bulunamadi.')}
                       className="mt-3 flex items-center justify-center gap-2 w-full py-2.5 px-4 bg-transparent hover:bg-[var(--accent)] text-[var(--accent)] hover:text-white border border-[var(--accent)] transition-colors font-semibold rounded-lg"
                     >
                       <ExternalLink size={18} />
                       Göreve Git
-                    </a>
+                    </button>
                   ) : null}
                 </div>
               </div>
