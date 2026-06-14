@@ -56,9 +56,13 @@ jobs:
       - name: Build installer DMG
         run: SKIP_APP_BUILD=1 TAURI_TARGET_TRIPLE=aarch64-apple-darwin bash scripts/build-manual-dmg.sh
 
-      - name: Upload installer DMG to release
+      - name: Build installer ZIP
+        run: SKIP_APP_BUILD=1 TAURI_TARGET_TRIPLE=aarch64-apple-darwin bash scripts/build-installer-zip.sh
+
+      - name: Upload installer extras to release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           files: |
             src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+            src-tauri/target/aarch64-apple-darwin/release/bundle/installer/*.zip
