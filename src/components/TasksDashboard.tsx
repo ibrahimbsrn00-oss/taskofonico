@@ -1056,6 +1056,23 @@ export default function TasksDashboard() {
     plated: 'Tabaktakiler',
     today: 'Bugünkü',
   }[activeTab];
+  const completedSummaryCards = [
+    {
+      label: 'Aktif Gorev',
+      value: tasks.length,
+      hint: 'Genel akista bekleyenler',
+    },
+    {
+      label: 'Bahsetme',
+      value: mentionTasks.length,
+      hint: 'Son mention hareketleri',
+    },
+    {
+      label: 'Tabaktakiler',
+      value: platedTasks.length,
+      hint: 'Elle secilip sabitlenenler',
+    },
+  ];
 
   const loginCatGifSrc = '/assets/login-cat.gif';
   const headerCatIconSrc = '/assets/header-cat.webp';
@@ -1530,7 +1547,7 @@ export default function TasksDashboard() {
                   void reorderPlatedTasks(draggedPlateTaskId, taskKey);
                 }}
                 onDragEnd={() => setDraggedPlateTaskId(null)}
-                className={`group relative card-bg border rounded-xl p-5 flex flex-col gap-3 shadow-sm hover:shadow-md transition-all ${isTaskCompleted(task) ? 'opacity-60 grayscale' : ''} ${draggedPlateTaskId === taskKey ? 'ring-2 ring-[var(--accent)]' : ''}`}
+                className={`group relative card-bg border rounded-xl p-5 flex flex-col gap-3 shadow-sm hover:shadow-md transition-all ${isPlateView ? 'cursor-grab active:cursor-grabbing' : ''} ${isTaskCompleted(task) ? 'opacity-60 grayscale' : ''} ${draggedPlateTaskId === taskKey ? 'ring-2 ring-[var(--accent)]' : ''}`}
               >
                 {!isPlateView && (
                   <button
@@ -1649,8 +1666,31 @@ export default function TasksDashboard() {
           </div>
         ) : (
           <div className="h-64 flex flex-col items-center justify-center card-bg rounded-xl border border-dashed border-[var(--border-main)]">
-            <p className="text-xl text-muted font-medium">{activeTab === 'all' ? 'Henüz görev bulunmuyor.' : `${emptyTabLabel} kategorisinde kayıt yok.`}</p>
-            <p className="text-sm text-muted mt-2">Görevleriniz otomatik olarak arka planda güncellenmektedir.</p>
+            {activeTab === 'completed' ? (
+              <div className="flex w-full max-w-3xl flex-col items-center gap-5 px-6 text-center">
+                <p className="text-xl text-muted font-medium">Son 7 gunde tamamlanan gorev gorunmuyor.</p>
+                <p className="text-sm text-muted">Tamamlananlar bos olsa da sistem calisiyor; diger akislardaki yogunlugu burada hizli bir ozetle gorebilirsin.</p>
+                <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-3">
+                  {completedSummaryCards.map((card) => (
+                    <div
+                      key={card.label}
+                      className="rounded-2xl border border-[var(--border-main)] bg-[var(--bg-main)] px-4 py-4 text-left shadow-sm"
+                    >
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted">
+                        {card.label}
+                      </div>
+                      <div className="mt-2 text-2xl font-bold text-themed">{card.value}</div>
+                      <div className="mt-1 text-xs text-muted">{card.hint}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <>
+                <p className="text-xl text-muted font-medium">{activeTab === 'all' ? 'Henüz görev bulunmuyor.' : `${emptyTabLabel} kategorisinde kayıt yok.`}</p>
+                <p className="text-sm text-muted mt-2">Görevleriniz otomatik olarak arka planda güncellenmektedir.</p>
+              </>
+            )}
             {activeTab === 'mentions' && (
               <div className="mt-3 rounded-xl border border-[var(--border-main)] bg-[var(--bg-main)] px-3 py-2 text-xs text-muted">
                 Tanilama: kaynak {(notificationDebug || EMPTY_NOTIFICATION_DEBUG).source} | sayfa {(notificationDebug || EMPTY_NOTIFICATION_DEBUG).readingsPages} | toplam {(notificationDebug || EMPTY_NOTIFICATION_DEBUG).readingsTotal} | mention eslesmesi {(notificationDebug || EMPTY_NOTIFICATION_DEBUG).mentionMatches}
