@@ -4,9 +4,11 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Manager, Window, WindowEvent,
 };
+use tauri_plugin_updater::UpdaterExt;
 
 const KEYCHAIN_SERVICE: &str = "com.taskofonico.desktop";
 const BASECAMP_TOKEN_ACCOUNT: &str = "basecamp_token";
+const UPDATER_PUBLIC_KEY: Option<&str> = option_env!("TASKOFONICO_UPDATER_PUBKEY");
 
 fn keychain_entry() -> Result<Entry, String> {
     Entry::new(KEYCHAIN_SERVICE, BASECAMP_TOKEN_ACCOUNT).map_err(|error| error.to_string())
@@ -125,6 +127,61 @@ fn show_main_window(app: AppHandle) -> Result<(), String> {
     show_main_window_from_handle(&app)
 }
 
+fn updater_pubkey() -> Option<&'static str> {
+    UPDATER_PUBLIC_KEY.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    })
+}
+
+async fn install_update_if_available(app: AppHandle) {
+    if cfg!(debug_assertions) {
+        return;
+    }
+
+    let updater = match app.updater() {
+        Ok(updater) => updater,
+        Err(error) => {
+            log::warn!("Updater check could not be initialized: {}", error);
+            return;
+        }
+    };
+
+    match updater.check().await {
+        Ok(Some(update)) => {
+            log::info!("Update {} found, downloading...", update.version);
+            if let Err(error) = update.download_and_install(
+                |chunk_length, content_length| {
+                    log::info!(
+                        "Updater progress: +{} bytes / {:?}",
+                        chunk_length,
+                        content_length
+                    );
+                },
+                || {
+                    log::info!("Updater download finished, installing...");
+                },
+            ).await {
+                log::error!("Update install failed: {}", error);
+                return;
+            }
+
+            log::info!("Update installed, restarting app.");
+            app.restart();
+        }
+        Ok(None) => {
+            log::info!("No update available.");
+        }
+        Err(error) => {
+            log::warn!("Updater check failed: {}", error);
+        }
+    }
+}
+
 #[tauri::command]
 fn open_external_url(url: String) -> Result<bool, String> {
     let trimmed = url.trim();
@@ -155,7 +212,14 @@ fn open_external_url(url: String) -> Result<bool, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+
+    #[cfg(desktop)]
+    if let Some(pubkey) = updater_pubkey() {
+        builder = builder.plugin(tauri_plugin_updater::Builder::new().pubkey(pubkey).build());
+    }
+
+    builder
         .plugin(tauri_plugin_store::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             load_basecamp_token,
@@ -176,6 +240,15 @@ pub fn run() {
                     None::<Vec<&str>>,
                 ))?;
                 build_tray(app.handle())?;
+
+                if updater_pubkey().is_some() {
+                    let updater_handle = app.handle().clone();
+                    tauri::async_runtime::spawn(async move {
+                        install_update_if_available(updater_handle).await;
+                    });
+                } else {
+                    log::warn!("Updater public key is missing; automatic updates are disabled.");
+                }
             }
 
             if cfg!(debug_assertions) {
