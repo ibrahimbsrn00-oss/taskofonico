@@ -4,7 +4,7 @@ import { collection, onSnapshot, query, where, doc, serverTimestamp, writeBatch 
 import { invoke } from '@tauri-apps/api/core';
 import { initAuth, anonymousSignIn, logout, db } from '../lib/firebase';
 import { appRuntime, preferencesStore, sessionStore } from '../lib/persistence';
-import { Zap, Loader2, LogOut, ExternalLink, GripVertical, X, Bell, BellRing, Palette, LayoutGrid, AtSign, ListTodo, CheckCheck, Soup, CalendarDays, MoonStar, SunMedium, Leaf, Waves, Flower2, Rocket } from 'lucide-react';
+import { Zap, Loader2, LogOut, ExternalLink, GripVertical, X, Bell, Palette, LayoutGrid, AtSign, ListTodo, CheckCheck, Soup, CalendarDays, MoonStar, SunMedium, Leaf, Waves, Flower2, Rocket } from 'lucide-react';
 
 
 interface ExtractedTask {
@@ -134,6 +134,7 @@ export default function TasksDashboard() {
   });
   const [basecampUser, setBasecampUser] = useState<any>(null);
   const [draggedPlateTaskId, setDraggedPlateTaskId] = useState<string | null>(null);
+  const [plateDropTargetId, setPlateDropTargetId] = useState<string | null>(null);
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
   const [tabDropTargetId, setTabDropTargetId] = useState<string | null>(null);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
@@ -152,7 +153,6 @@ export default function TasksDashboard() {
   const hasPrimedActivityNotificationsRef = useRef(false);
   const hasHydratedTabOrderRef = useRef(false);
   const hasHydratedPlateTasksRef = useRef(false);
-  const notificationAudioContextRef = useRef<AudioContext | null>(null);
   const seenActivityKeysRef = useRef<Set<string>>(
     new Set(preferencesStore.getSeenActivityKeys<string[]>([]))
   );
@@ -426,87 +426,6 @@ export default function TasksDashboard() {
     await openTaskUrl(task.taskUrl, 'Bu bildirimin Basecamp baglantisi bulunamadi.');
   };
 
-  const playTestNotificationSound = async () => {
-    if (typeof window === 'undefined') return;
-
-    const AudioContextConstructor = window.AudioContext || (window as typeof window & {
-      webkitAudioContext?: typeof AudioContext;
-    }).webkitAudioContext;
-
-    if (!AudioContextConstructor) return;
-
-    const audioContext =
-      notificationAudioContextRef.current || new AudioContextConstructor();
-    notificationAudioContextRef.current = audioContext;
-
-    if (audioContext.state === 'suspended') {
-      await audioContext.resume();
-    }
-
-    const notes = [
-      { frequency: 740, duration: 0.1, startAt: 0 },
-      { frequency: 988, duration: 0.16, startAt: 0.12 },
-    ];
-
-    notes.forEach(({ frequency, duration, startAt }) => {
-      const oscillator = audioContext.createOscillator();
-      const gainNode = audioContext.createGain();
-      const now = audioContext.currentTime + startAt;
-
-      oscillator.type = 'sine';
-      oscillator.frequency.setValueAtTime(frequency, now);
-      gainNode.gain.setValueAtTime(0.0001, now);
-      gainNode.gain.exponentialRampToValueAtTime(0.18, now + 0.02);
-      gainNode.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-
-      oscillator.connect(gainNode);
-      gainNode.connect(audioContext.destination);
-      oscillator.start(now);
-      oscillator.stop(now + duration + 0.02);
-    });
-  };
-
-  const handleTriggerTestNotification = async () => {
-    const nowIso = new Date().toISOString();
-    const testNotification: ExtractedTask = {
-      taskName: 'Test bildirimi: yeni mention yakalandi',
-      projectName: 'Taskofonico Test Masasi',
-      mentionText: 'Bu kayit, uygulama ici bildirim ve ses akisini kontrol etmen icin olusturuldu.',
-      deadline: null,
-      mentionAt: nowIso,
-      unreadAt: nowIso,
-      unreadCount: 1,
-      category: 'notification',
-      taskUrl: null,
-      creatorName: 'Taskofonico',
-    };
-
-    setNotificationTasks((currentTasks) => sortByActivityAt([testNotification, ...currentTasks]));
-    setIsNotificationsOpen(true);
-    setStatusText('TEST BILDIRIMI OLUSTURULDU.');
-
-    if (appRuntime.isTauriDesktop()) {
-      await pushSystemNotification(testNotification);
-      return;
-    }
-
-    await playTestNotificationSound();
-
-    if (typeof window !== 'undefined' && 'Notification' in window) {
-      if (Notification.permission === 'default') {
-        try {
-          await Notification.requestPermission();
-        } catch (error) {
-          console.error('Notification permission request failed:', error);
-        }
-      }
-
-      if (Notification.permission === 'granted') {
-        await pushSystemNotification(testNotification);
-      }
-    }
-  };
-
   const hasTaskChanged = (currentTask: ExtractedTask | undefined, nextTask: ExtractedTask) => {
     if (!currentTask) return true;
 
@@ -541,19 +460,23 @@ export default function TasksDashboard() {
     setStatusText('GÖREV TABAKTAN KALDIRILDI.');
   };
 
-  const reorderPlatedTasks = async (sourceTaskId: string, targetTaskId: string) => {
+  const reorderPlatedTasks = (sourceTaskId: string, targetTaskId: string) => {
     if (sourceTaskId === targetTaskId) return;
 
-    const sourceIndex = platedTasks.findIndex((task) => task.sourceTaskKey === sourceTaskId);
-    const targetIndex = platedTasks.findIndex((task) => task.sourceTaskKey === targetTaskId);
-    if (sourceIndex === -1 || targetIndex === -1) return;
+    setPlatedTasks((currentTasks) => {
+      const sourceIndex = currentTasks.findIndex((task) => task.sourceTaskKey === sourceTaskId);
+      const targetIndex = currentTasks.findIndex((task) => task.sourceTaskKey === targetTaskId);
+      if (sourceIndex === -1 || targetIndex === -1) return currentTasks;
 
-    const nextPlatedTasks = [...platedTasks];
-    const [movedTask] = nextPlatedTasks.splice(sourceIndex, 1);
-    nextPlatedTasks.splice(targetIndex, 0, movedTask);
-    const normalizedTasks = normalizePlateOrder(nextPlatedTasks);
-    setPlatedTasks(normalizedTasks);
+      const nextPlatedTasks = [...currentTasks];
+      const [movedTask] = nextPlatedTasks.splice(sourceIndex, 1);
+      nextPlatedTasks.splice(targetIndex, 0, movedTask);
+      return normalizePlateOrder(nextPlatedTasks);
+    });
+
     setDraggedPlateTaskId(null);
+    setPlateDropTargetId(null);
+    setStatusText('TABAK SIRASI GUNCELLENDI.');
   };
 
   useEffect(() => {
@@ -1186,6 +1109,7 @@ export default function TasksDashboard() {
       icon: Soup,
     },
   ];
+  const latestMention = mentionTasks[0] || null;
 
   const loginCatGifSrc = '/assets/login-cat.gif';
   const headerCatIconSrc = '/assets/header-cat.webp';
@@ -1511,26 +1435,39 @@ export default function TasksDashboard() {
             );
           })}
 
-          <button
-            type="button"
-            onClick={() => void handleTriggerTestNotification()}
-            className="card-bg app-panel flex h-full min-h-[7.6rem] flex-col justify-between rounded-[1.35rem] border border-[var(--border-main)] px-4 py-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
-          >
+          <div className="card-bg app-panel flex h-full min-h-[7.6rem] flex-col justify-between rounded-[1.35rem] border border-[var(--border-main)] px-4 py-4 text-left shadow-sm">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted">
-                  Bildirim Testi
+                  Son Bahsetme
                 </div>
-                <div className="mt-2 text-lg font-bold text-themed">Ses ve popup dene</div>
+                <div className="mt-2 line-clamp-2 text-base font-bold text-themed">
+                  {latestMention ? latestMention.taskName : 'Henuz bahsetme yakalanmadi'}
+                </div>
+                <div className="mt-1 text-xs text-muted">
+                  {latestMention
+                    ? `${formatRelativeMentionTime(latestMention.mentionAt)}${latestMention.projectName ? ` • ${latestMention.projectName}` : ''}`
+                    : 'Yeni mention geldikce burada en son kaydi goreceksin.'}
+                </div>
               </div>
               <div className="rounded-2xl border border-[var(--border-main)] bg-[var(--bg-main)] p-3 text-[var(--accent)] shadow-sm">
-                <BellRing size={18} />
+                <AtSign size={18} />
               </div>
             </div>
-            <div className="mt-3 inline-flex w-fit items-center rounded-full bg-[var(--accent)] px-3 py-1.5 text-xs font-semibold text-white shadow-sm">
-              Dümenden bildirim gonder
-            </div>
-          </button>
+            {latestMention?.taskUrl ? (
+              <button
+                type="button"
+                onClick={() => void openTaskUrl(latestMention.taskUrl, 'Bu bahsetmenin Basecamp baglantisi bulunamadi.')}
+                className="mt-3 inline-flex w-fit items-center rounded-full bg-[var(--accent)] px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-all hover:brightness-110"
+              >
+                Göreve Git
+              </button>
+            ) : (
+              <div className="mt-3 inline-flex w-fit items-center rounded-full border border-[var(--border-main)] px-3 py-1.5 text-xs font-semibold text-muted">
+                Link hazir degil
+              </div>
+            )}
+          </div>
         </section>
 
         <div className="flex flex-col md:flex-row justify-between items-center card-bg app-panel rounded-[1.5rem] shadow-sm p-3 gap-4">
@@ -1692,21 +1629,34 @@ export default function TasksDashboard() {
               <div
                 key={isPlateView ? taskKey : i}
                 draggable={isPlateView}
-                onDragStart={() => {
+                onDragStart={(event) => {
                   if (!isPlateView) return;
+                  event.dataTransfer.effectAllowed = 'move';
+                  event.dataTransfer.setData('text/plain', taskKey);
                   setDraggedPlateTaskId(taskKey);
+                  setPlateDropTargetId(taskKey);
+                }}
+                onDragEnter={() => {
+                  if (!isPlateView || !draggedPlateTaskId || draggedPlateTaskId === taskKey) return;
+                  setPlateDropTargetId(taskKey);
                 }}
                 onDragOver={(event) => {
                   if (!isPlateView) return;
                   event.preventDefault();
+                  event.dataTransfer.dropEffect = 'move';
                 }}
                 onDrop={(event) => {
-                  if (!isPlateView || !draggedPlateTaskId) return;
+                  if (!isPlateView) return;
                   event.preventDefault();
-                  void reorderPlatedTasks(draggedPlateTaskId, taskKey);
+                  const sourceTaskId = event.dataTransfer.getData('text/plain') || draggedPlateTaskId;
+                  if (!sourceTaskId) return;
+                  reorderPlatedTasks(sourceTaskId, taskKey);
                 }}
-                onDragEnd={() => setDraggedPlateTaskId(null)}
-                className={`group relative card-bg border rounded-xl p-5 flex flex-col gap-3 shadow-sm hover:shadow-md transition-all ${isPlateView ? 'cursor-grab active:cursor-grabbing' : ''} ${isTaskCompleted(task) ? 'opacity-60 grayscale' : ''} ${draggedPlateTaskId === taskKey ? 'ring-2 ring-[var(--accent)]' : ''}`}
+                onDragEnd={() => {
+                  setDraggedPlateTaskId(null);
+                  setPlateDropTargetId(null);
+                }}
+                className={`group relative card-bg border rounded-xl p-5 flex flex-col gap-3 shadow-sm hover:shadow-md transition-all ${isPlateView ? 'cursor-grab active:cursor-grabbing' : ''} ${isTaskCompleted(task) ? 'opacity-60 grayscale' : ''} ${draggedPlateTaskId === taskKey ? 'ring-2 ring-[var(--accent)] opacity-70' : ''} ${plateDropTargetId === taskKey && draggedPlateTaskId !== taskKey ? 'border-[var(--accent)] translate-y-[-2px]' : ''}`}
               >
                 {!isPlateView && (
                   <button
