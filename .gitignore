@@ -9,3 +9,6 @@ coverage/
 .antigravity/
 .migration-backup/
 .vscode/
+.local-secrets/
+taskofonico-updater.key
+taskofonico-updater.key.pub

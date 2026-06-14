@@ -4,7 +4,7 @@ import { collection, onSnapshot, query, where, doc, serverTimestamp, writeBatch 
 import { invoke } from '@tauri-apps/api/core';
 import { initAuth, anonymousSignIn, logout, db } from '../lib/firebase';
 import { appRuntime, preferencesStore, sessionStore } from '../lib/persistence';
-import { Zap, Loader2, LogOut, ExternalLink, GripVertical, X, Bell, Palette, LayoutGrid, AtSign, ListTodo, CheckCheck, Soup, CalendarDays, MoonStar, SunMedium, Leaf, Waves, Flower2, Rocket } from 'lucide-react';
+import { Zap, Loader2, LogOut, ExternalLink, GripVertical, X, Bell, BellRing, Palette, LayoutGrid, AtSign, ListTodo, CheckCheck, Soup, CalendarDays, MoonStar, SunMedium, Leaf, Waves, Flower2, Rocket } from 'lucide-react';
 
 
 interface ExtractedTask {
@@ -152,6 +152,7 @@ export default function TasksDashboard() {
   const hasPrimedActivityNotificationsRef = useRef(false);
   const hasHydratedTabOrderRef = useRef(false);
   const hasHydratedPlateTasksRef = useRef(false);
+  const notificationAudioContextRef = useRef<AudioContext | null>(null);
   const seenActivityKeysRef = useRef<Set<string>>(
     new Set(preferencesStore.getSeenActivityKeys<string[]>([]))
   );
@@ -303,7 +304,7 @@ export default function TasksDashboard() {
       const dateB = parseDeadlineDate(b.completedAt || null)?.getTime() || 0;
       return dateB - dateA;
     });
-    return items;
+    return items.slice(0, 7);
   };
 
   const sortByMentionAt = (items: ExtractedTask[]) => {
@@ -410,6 +411,82 @@ export default function TasksDashboard() {
     markNotificationAsReadLocally(task);
     setIsNotificationsOpen(false);
     await openTaskUrl(task.taskUrl, 'Bu bildirimin Basecamp baglantisi bulunamadi.');
+  };
+
+  const playTestNotificationSound = async () => {
+    if (typeof window === 'undefined') return;
+
+    const AudioContextConstructor = window.AudioContext || (window as typeof window & {
+      webkitAudioContext?: typeof AudioContext;
+    }).webkitAudioContext;
+
+    if (!AudioContextConstructor) return;
+
+    const audioContext =
+      notificationAudioContextRef.current || new AudioContextConstructor();
+    notificationAudioContextRef.current = audioContext;
+
+    if (audioContext.state === 'suspended') {
+      await audioContext.resume();
+    }
+
+    const notes = [
+      { frequency: 740, duration: 0.1, startAt: 0 },
+      { frequency: 988, duration: 0.16, startAt: 0.12 },
+    ];
+
+    notes.forEach(({ frequency, duration, startAt }) => {
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      const now = audioContext.currentTime + startAt;
+
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(frequency, now);
+      gainNode.gain.setValueAtTime(0.0001, now);
+      gainNode.gain.exponentialRampToValueAtTime(0.18, now + 0.02);
+      gainNode.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      oscillator.start(now);
+      oscillator.stop(now + duration + 0.02);
+    });
+  };
+
+  const handleTriggerTestNotification = async () => {
+    const nowIso = new Date().toISOString();
+    const testNotification: ExtractedTask = {
+      taskName: 'Test bildirimi: yeni mention yakalandi',
+      projectName: 'Taskofonico Test Masasi',
+      mentionText: 'Bu kayit, uygulama ici bildirim ve ses akisini kontrol etmen icin olusturuldu.',
+      deadline: null,
+      mentionAt: nowIso,
+      unreadAt: nowIso,
+      unreadCount: 1,
+      category: 'notification',
+      taskUrl: null,
+      creatorName: 'Taskofonico',
+    };
+
+    setNotificationTasks((currentTasks) => sortByActivityAt([testNotification, ...currentTasks]));
+    setIsNotificationsOpen(true);
+    setStatusText('TEST BILDIRIMI OLUSTURULDU.');
+
+    await playTestNotificationSound();
+
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      if (Notification.permission === 'default') {
+        try {
+          await Notification.requestPermission();
+        } catch (error) {
+          console.error('Notification permission request failed:', error);
+        }
+      }
+
+      if (Notification.permission === 'granted') {
+        pushSystemNotification(testNotification);
+      }
+    }
   };
 
   const hasTaskChanged = (currentTask: ExtractedTask | undefined, nextTask: ExtractedTask) => {
@@ -704,7 +781,7 @@ export default function TasksDashboard() {
       setNotificationDebug(data.notificationDebug || EMPTY_NOTIFICATION_DEBUG);
 
       if (syncMode === 'full') {
-        setCompletedTasks(includeCompleted ? recentCompleted : []);
+        setCompletedTasks(recentCompleted);
       }
 
       if (
@@ -866,9 +943,11 @@ export default function TasksDashboard() {
 
       const { activityMs, fullMs } = getPollingConfig();
       const now = Date.now();
-      const shouldRunFullSync = !hasInitialLoad || now - lastFullSyncAtRef.current >= fullMs;
+      const forceCompletedSync = activeTab === 'completed';
+      const shouldRunFullSync =
+        forceCompletedSync || !hasInitialLoad || now - lastFullSyncAtRef.current >= fullMs;
       const result = await fetchTasks({
-        includeCompleted: shouldRunFullSync && activeTab === 'completed',
+        includeCompleted: shouldRunFullSync,
         includeMentions: true,
         includeNotifications: true,
         syncMode: shouldRunFullSync ? 'full' : 'activity',
@@ -880,7 +959,7 @@ export default function TasksDashboard() {
         if (shouldRunFullSync) {
           lastFullSyncAtRef.current = Date.now();
         }
-        scheduleNextPoll(activityMs);
+        scheduleNextPoll(forceCompletedSync ? fullMs : activityMs);
         return;
       }
 
@@ -1071,6 +1150,20 @@ export default function TasksDashboard() {
       label: 'Tabaktakiler',
       value: platedTasks.length,
       hint: 'Elle secilip sabitlenenler',
+    },
+  ];
+  const pinnedSummaryCards = [
+    {
+      label: 'Aktif Gorev',
+      value: tasks.length,
+      hint: 'Sirada bekleyen kartlar',
+      icon: ListTodo,
+    },
+    {
+      label: 'Tabaktakiler',
+      value: platedTasks.length,
+      hint: 'Sabit tuttugun secimler',
+      icon: Soup,
     },
   ];
 
@@ -1374,6 +1467,52 @@ export default function TasksDashboard() {
       </header>
 
       <main className="relative z-10 flex-grow flex flex-col gap-6">
+        <section className="sticky top-4 z-20 grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(16rem,20rem)]">
+          {pinnedSummaryCards.map((card) => {
+            const Icon = card.icon;
+            return (
+              <div
+                key={card.label}
+                className="card-bg app-panel rounded-[1.35rem] border border-[var(--border-main)] px-4 py-4 shadow-sm backdrop-blur"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted">
+                      {card.label}
+                    </div>
+                    <div className="mt-2 text-3xl font-bold text-themed">{card.value}</div>
+                    <div className="mt-1 text-xs text-muted">{card.hint}</div>
+                  </div>
+                  <div className="rounded-2xl border border-[var(--border-main)] bg-[var(--bg-main)] p-3 text-[var(--accent)] shadow-sm">
+                    <Icon size={18} />
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+
+          <button
+            type="button"
+            onClick={() => void handleTriggerTestNotification()}
+            className="card-bg app-panel flex h-full min-h-[7.6rem] flex-col justify-between rounded-[1.35rem] border border-[var(--border-main)] px-4 py-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted">
+                  Bildirim Testi
+                </div>
+                <div className="mt-2 text-lg font-bold text-themed">Ses ve popup dene</div>
+              </div>
+              <div className="rounded-2xl border border-[var(--border-main)] bg-[var(--bg-main)] p-3 text-[var(--accent)] shadow-sm">
+                <BellRing size={18} />
+              </div>
+            </div>
+            <div className="mt-3 inline-flex w-fit items-center rounded-full bg-[var(--accent)] px-3 py-1.5 text-xs font-semibold text-white shadow-sm">
+              Dümenden bildirim gonder
+            </div>
+          </button>
+        </section>
+
         <div className="flex flex-col md:flex-row justify-between items-center card-bg app-panel rounded-[1.5rem] shadow-sm p-3 gap-4">
           <div className="flex gap-2 text-sm sm:text-base overflow-x-auto whitespace-nowrap scrollbar-hide py-2 px-2 w-full">
             {tabOrder.map((tabId) => {
@@ -1436,7 +1575,7 @@ export default function TasksDashboard() {
 
         {activeTab === 'completed' && (
           <div className="rounded-xl border border-[var(--border-main)] bg-[var(--bg-main)] px-4 py-3 text-sm text-muted">
-            Not: Bu alanda yalnızca son 7 günde tamamlanan görevler gösterilir.
+            Not: Bu alanda en son tamamlanan 7 gorev gosterilir.
           </div>
         )}
 
@@ -1668,7 +1807,7 @@ export default function TasksDashboard() {
           <div className="h-64 flex flex-col items-center justify-center card-bg rounded-xl border border-dashed border-[var(--border-main)]">
             {activeTab === 'completed' ? (
               <div className="flex w-full max-w-3xl flex-col items-center gap-5 px-6 text-center">
-                <p className="text-xl text-muted font-medium">Son 7 gunde tamamlanan gorev gorunmuyor.</p>
+                <p className="text-xl text-muted font-medium">Son tamamlanan 7 gorev icinde kayit gorunmuyor.</p>
                 <p className="text-sm text-muted">Tamamlananlar bos olsa da sistem calisiyor; diger akislardaki yogunlugu burada hizli bir ozetle gorebilirsin.</p>
                 <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-3">
                   {completedSummaryCards.map((card) => (

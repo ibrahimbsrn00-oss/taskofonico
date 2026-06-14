@@ -321,18 +321,8 @@ app.post("/api/basecamp/tasks", async (req, res) => {
       "User-Agent": userAgent
     };
 
-    const parseApiDate = (value: unknown) => {
-      if (typeof value !== "string" || !value) return null;
-      const parsed = new Date(value);
-      return Number.isNaN(parsed.getTime()) ? null : parsed;
-    };
-
     const getCompletedAtValue = (item: any) =>
       item?.completed_at || item?.completed_on || item?.updated_at || item?.updated_on || null;
-
-    const completedCutoff = new Date();
-    completedCutoff.setHours(0, 0, 0, 0);
-    completedCutoff.setDate(completedCutoff.getDate() - 6);
     const shouldFetchCompletedAssignments = !activityOnly && Boolean(includeCompleted || includeMentions || includeNotifications);
     const shouldFetchReadings = Boolean(includeMentions || includeNotifications);
     const shouldFetchProfile = !activityOnly || !getCachedValue(profileCache, accessToken);
@@ -409,10 +399,13 @@ app.post("/api/basecamp/tasks", async (req, res) => {
         const completedData = await completedAssignRes.json().catch(() => null);
         if (Array.isArray(completedData)) {
           allCompletedAssignments = completedData;
-          completedAssignments = completedData.filter((item: any) => {
-            const completedAt = parseApiDate(getCompletedAtValue(item));
-            return completedAt ? completedAt >= completedCutoff : false;
-          });
+          completedAssignments = [...completedData]
+            .sort((a: any, b: any) => {
+              const dateA = new Date(getCompletedAtValue(a) || 0).getTime();
+              const dateB = new Date(getCompletedAtValue(b) || 0).getTime();
+              return dateB - dateA;
+            })
+            .slice(0, 7);
         }
       }
 
