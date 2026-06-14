@@ -191,17 +191,30 @@ export default function TasksDashboard() {
     preferencesStore.setSeenActivityKeys(trimmedKeys);
   };
 
-  const canUseSystemNotifications = () =>
+  const canUseBrowserNotifications = () =>
     typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted';
 
-  const pushSystemNotification = (task: ExtractedTask) => {
-    if (!canUseSystemNotifications()) return;
-
+  const pushSystemNotification = async (task: ExtractedTask) => {
     const titlePrefix = task.category === 'mention' ? 'Yeni bahsetme' : 'Yeni bildirim';
     const bodyParts = [
       task.projectName || 'Bilinmeyen Proje',
       task.mentionText || task.taskName,
     ].filter(Boolean);
+
+    if (appRuntime.isTauriDesktop()) {
+      try {
+        await invoke('show_native_notification', {
+          title: `${titlePrefix}: ${task.taskName}`,
+          body: bodyParts.join(' • '),
+          soundName: 'Glass',
+        });
+        return;
+      } catch (error) {
+        console.error('Native notification error:', error);
+      }
+    }
+
+    if (!canUseBrowserNotifications()) return;
 
     const notification = new Notification(`${titlePrefix}: ${task.taskName}`, {
       body: bodyParts.join(' • '),
@@ -472,6 +485,11 @@ export default function TasksDashboard() {
     setIsNotificationsOpen(true);
     setStatusText('TEST BILDIRIMI OLUSTURULDU.');
 
+    if (appRuntime.isTauriDesktop()) {
+      await pushSystemNotification(testNotification);
+      return;
+    }
+
     await playTestNotificationSound();
 
     if (typeof window !== 'undefined' && 'Notification' in window) {
@@ -484,7 +502,7 @@ export default function TasksDashboard() {
       }
 
       if (Notification.permission === 'granted') {
-        pushSystemNotification(testNotification);
+        await pushSystemNotification(testNotification);
       }
     }
   };
@@ -696,7 +714,7 @@ export default function TasksDashboard() {
   }, []);
 
   useEffect(() => {
-    if (needsAuth || typeof window === 'undefined' || !('Notification' in window)) {
+    if (needsAuth || appRuntime.isTauriDesktop() || typeof window === 'undefined' || !('Notification' in window)) {
       return;
     }
 
@@ -1022,7 +1040,9 @@ export default function TasksDashboard() {
     if (newItems.length === 0) return;
 
     if (shouldPushSystemNotification) {
-      newItems.slice(0, 3).forEach((task) => pushSystemNotification(task));
+      newItems.slice(0, 3).forEach((task) => {
+        void pushSystemNotification(task);
+      });
     }
 
     persistSeenActivityKeys();

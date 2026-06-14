@@ -5,15 +5,26 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TAURI_CONFIG_PATH="$ROOT_DIR/src-tauri/tauri.conf.json"
 APP_NAME="$(node -e "console.log(JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).productName)" "$TAURI_CONFIG_PATH")"
 APP_VERSION="$(node -e "console.log(JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).version)" "$TAURI_CONFIG_PATH")"
-APP_BUNDLE_PATH="$ROOT_DIR/src-tauri/target/release/bundle/macos/${APP_NAME}.app"
-DMG_DIR="$ROOT_DIR/src-tauri/target/release/bundle/dmg"
-STAGING_DIR="$ROOT_DIR/src-tauri/target/release/bundle/manual-dmg-staging"
 ARCH="$(uname -m)"
-OUTPUT_DMG_PATH="$DMG_DIR/${APP_NAME}_${APP_VERSION}_${ARCH}_manual.dmg"
+TARGET_TRIPLE="${TAURI_TARGET_TRIPLE:-}"
+TARGET_SUBDIR="${TARGET_TRIPLE:+$TARGET_TRIPLE/}release"
+APP_BUNDLE_PATH="$ROOT_DIR/src-tauri/target/${TARGET_SUBDIR}/bundle/macos/${APP_NAME}.app"
+DMG_DIR="$ROOT_DIR/src-tauri/target/${TARGET_SUBDIR}/bundle/dmg"
+STAGING_DIR="$ROOT_DIR/src-tauri/target/${TARGET_SUBDIR}/bundle/manual-dmg-staging"
+OUTPUT_DMG_PATH="$DMG_DIR/${APP_NAME}_${APP_VERSION}_${ARCH}.dmg"
 
-echo "Building macOS .app bundle..."
 cd "$ROOT_DIR"
-npx tauri build --bundles app --no-sign
+
+if [[ "${SKIP_APP_BUILD:-0}" != "1" ]]; then
+  echo "Building macOS .app bundle..."
+  BUILD_ARGS=(build --bundles app --no-sign)
+  if [[ -n "$TARGET_TRIPLE" ]]; then
+    BUILD_ARGS+=(--target "$TARGET_TRIPLE")
+  fi
+  npx tauri "${BUILD_ARGS[@]}"
+else
+  echo "Skipping app build and packaging existing bundle..."
+fi
 
 if [[ ! -d "$APP_BUNDLE_PATH" ]]; then
   echo "Expected app bundle was not found at: $APP_BUNDLE_PATH" >&2

@@ -126,6 +126,59 @@ fn show_main_window(app: AppHandle) -> Result<(), String> {
     show_main_window_from_handle(&app)
 }
 
+fn escape_applescript_string(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+#[tauri::command]
+fn show_native_notification(
+    title: String,
+    body: Option<String>,
+    sound_name: Option<String>,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let title = escape_applescript_string(title.trim());
+        let body = escape_applescript_string(body.unwrap_or_default().trim());
+
+        let mut script = if body.is_empty() {
+            format!("display notification with title \"{}\"", title)
+        } else {
+            format!(
+                "display notification \"{}\" with title \"{}\"",
+                body, title
+            )
+        };
+
+        if let Some(sound_name) = sound_name
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+        {
+            script.push_str(&format!(
+                " sound name \"{}\"",
+                escape_applescript_string(&sound_name)
+            ));
+        }
+
+        let status = std::process::Command::new("osascript")
+            .args(["-e", &script])
+            .status()
+            .map_err(|error| error.to_string())?;
+
+        if status.success() {
+            return Ok(());
+        }
+
+        return Err("macOS notification command failed.".to_string());
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (title, body, sound_name);
+        Ok(())
+    }
+}
+
 async fn install_update_if_available(app: AppHandle) {
     if cfg!(debug_assertions) {
         return;
@@ -216,7 +269,8 @@ pub fn run() {
             get_launch_at_login_enabled,
             set_launch_at_login_enabled,
             show_main_window,
-            open_external_url
+            open_external_url,
+            show_native_notification
         ])
         .setup(|app| {
             #[cfg(desktop)]
