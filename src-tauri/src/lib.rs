@@ -8,7 +8,6 @@ use tauri_plugin_updater::UpdaterExt;
 
 const KEYCHAIN_SERVICE: &str = "com.taskofonico.desktop";
 const BASECAMP_TOKEN_ACCOUNT: &str = "basecamp_token";
-const UPDATER_PUBLIC_KEY: Option<&str> = option_env!("TASKOFONICO_UPDATER_PUBKEY");
 
 fn keychain_entry() -> Result<Entry, String> {
     Entry::new(KEYCHAIN_SERVICE, BASECAMP_TOKEN_ACCOUNT).map_err(|error| error.to_string())
@@ -127,17 +126,6 @@ fn show_main_window(app: AppHandle) -> Result<(), String> {
     show_main_window_from_handle(&app)
 }
 
-fn updater_pubkey() -> Option<&'static str> {
-    UPDATER_PUBLIC_KEY.and_then(|value| {
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed)
-        }
-    })
-}
-
 async fn install_update_if_available(app: AppHandle) {
     if cfg!(debug_assertions) {
         return;
@@ -215,8 +203,8 @@ pub fn run() {
     let mut builder = tauri::Builder::default();
 
     #[cfg(desktop)]
-    if let Some(pubkey) = updater_pubkey() {
-        builder = builder.plugin(tauri_plugin_updater::Builder::new().pubkey(pubkey).build());
+    {
+        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     }
 
     builder
@@ -241,14 +229,10 @@ pub fn run() {
                 ))?;
                 build_tray(app.handle())?;
 
-                if updater_pubkey().is_some() {
-                    let updater_handle = app.handle().clone();
-                    tauri::async_runtime::spawn(async move {
-                        install_update_if_available(updater_handle).await;
-                    });
-                } else {
-                    log::warn!("Updater public key is missing; automatic updates are disabled.");
-                }
+                let updater_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    install_update_if_available(updater_handle).await;
+                });
             }
 
             if cfg!(debug_assertions) {
